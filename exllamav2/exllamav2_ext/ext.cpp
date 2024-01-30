@@ -101,7 +101,7 @@ void quantize_err
     torch::Tensor input,
     torch::Tensor output,
     torch::Tensor scale,
-    float qzero,
+    torch::Tensor qzero,
     float maxq,
     float err_norm,
     float min_p,
@@ -126,7 +126,7 @@ void quantize_err
         (float*) scale.data_ptr(),
         rows,
         columns,
-        qzero,
+        (float*) qzero.data_ptr(),
         maxq,
         err_norm,
         min_p,
@@ -141,7 +141,7 @@ void quantize
     torch::Tensor output,
     torch::Tensor scale,
     torch::Tensor out_q,
-    float qzero,
+    torch::Tensor qzero,
     float maxq
 )
 {
@@ -162,7 +162,7 @@ void quantize
         out_q.device().is_meta() ? NULL : (uint16_t*) out_q.data_ptr(),
         rows,
         columns,
-        qzero,
+        (float*) qzero.data_ptr(),
         maxq
     );
 }

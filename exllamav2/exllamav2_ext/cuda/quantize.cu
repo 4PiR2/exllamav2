@@ -72,7 +72,7 @@ void fused_quantize_adjust_cuda
     int row,
     int rows,
     int columns,
-    const float* qzero,
+    const float*    qzero,
     float maxq
 )
 {
@@ -103,7 +103,7 @@ __global__ void quantize_kernel
     uint16_t* __restrict__ out_q,
     int rows,
     int columns,
-    float qzero,
+    const float* __restrict__ qzero,
     float maxq
 )
 {
@@ -116,9 +116,10 @@ __global__ void quantize_kernel
 
     float x = input[row * columns + column];
     float s = scale[column];
+    float z = qzero[column];
     x /= s;
     x = rintf(x);
-    x += qzero;
+    x += z;
     x = clamp(x, 0.0f, maxq);
 
     // Optionally save quant
@@ -131,9 +132,9 @@ __global__ void quantize_kernel
 
     half h_s = __float2half_rn(s);
     half h_x = __float2half_rn(x);
-    half h_qzero = __float2half_rn(qzero);
+    half h_z = __float2half_rn(z);
 
-    h_x = __hsub(h_x, h_qzero);
+    h_x = __hsub(h_x, h_z);
     h_x = __hmul(h_x, h_s);
 
     // Dequantize
@@ -149,7 +150,7 @@ void quantize_cuda
     uint16_t* out_q,
     int rows,
     int columns,
-    float qzero,
+    const float* qzero,
     float maxq
 )
 {
@@ -218,7 +219,7 @@ __global__ void quantize_err_kernel
     const float* __restrict__ scale,
     int rows,
     int columns,
-    float qzero,
+    const float* __restrict__ qzero,
     float maxq,
     float err_norm,
     float min_p,
@@ -232,10 +233,11 @@ __global__ void quantize_err_kernel
     if (column >= columns) return;
     if (row >= rows) return;
 
-    float clamp_min = -qzero;
-    float clamp_max = maxq - qzero;
+//     float clamp_min = -qzero;
+//     float clamp_max = maxq - qzero;
 
     float4 sc4 = *((float4*) (scale + column));
+    float4 zc4 = *((float4*) (qzero + column));
     float4 w4 = *((float4*) (input + row * columns + column));
 
     for (int i = 0; i <= p_grid; i++)
@@ -249,10 +251,10 @@ __global__ void quantize_err_kernel
         s4.z *= p;
         s4.w *= p;
 
-        float err = __powf(fabsf(clamp(rintf(w4.x / s4.x), clamp_min, clamp_max) * s4.x - w4.x), err_norm);
-        err +=      __powf(fabsf(clamp(rintf(w4.y / s4.y), clamp_min, clamp_max) * s4.y - w4.y), err_norm);
-        err +=      __powf(fabsf(clamp(rintf(w4.z / s4.z), clamp_min, clamp_max) * s4.z - w4.z), err_norm);
-        err +=      __powf(fabsf(clamp(rintf(w4.w / s4.w), clamp_min, clamp_max) * s4.w - w4.w), err_norm);
+        float err = __powf(fabsf(clamp(rintf(w4.x / s4.x), -zc4.x, maxq - zc4.x) * s4.x - w4.x), err_norm);
+        err +=      __powf(fabsf(clamp(rintf(w4.y / s4.y), -zc4.y, maxq - zc4.y) * s4.y - w4.y), err_norm);
+        err +=      __powf(fabsf(clamp(rintf(w4.z / s4.z), -zc4.z, maxq - zc4.z) * s4.z - w4.z), err_norm);
+        err +=      __powf(fabsf(clamp(rintf(w4.w / s4.w), -zc4.w, maxq - zc4.w) * s4.w - w4.w), err_norm);
 
         atomicAdd(&output[i * 128 + column_ % 128], err);
     }
@@ -265,7 +267,7 @@ void quantize_err_cuda
     const float* scale,
     int rows,
     int columns,
-    float qzero,
+    const float* qzero,
     float maxq,
     float err_norm,
     float min_p,

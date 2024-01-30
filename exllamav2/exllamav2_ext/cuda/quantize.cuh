@@ -14,7 +14,7 @@ void quantize_cuda
     uint16_t* out_q,
     int rows,
     int columns,
-    float qzero,
+    const float* qzero,
     float maxq
 );
 
@@ -51,7 +51,7 @@ void quantize_err_cuda
     const float* scale,
     int rows,
     int columns,
-    float qzero,
+    const float* qzero,
     float maxq,
     float err_norm,
     float min_p,
