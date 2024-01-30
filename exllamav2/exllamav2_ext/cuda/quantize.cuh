@@ -40,7 +40,7 @@ void fused_quantize_adjust_cuda
     int row,
     int rows,
     int columns,
-    float qzero,
+    const float* qzero,
     float maxq
 );
 

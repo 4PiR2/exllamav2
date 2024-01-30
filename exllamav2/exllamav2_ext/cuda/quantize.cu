@@ -18,7 +18,7 @@ __global__ void fused_quantize_adjust_kernel
     int row,                                    // row index to quantize
     int rows,                                   // num rows
     int columns,                                // num columns
-    float qzero,                                // 2^(bits - 1)
+    const float* __restrict__ qzero,            // 2^(bits - 1)
     float maxq                                  // (2^bits) - 1
 )
 {
@@ -31,9 +31,10 @@ __global__ void fused_quantize_adjust_kernel
 
     float x = weights[idx];
     float s = scale[column];
+    float z = qzero[column];
     x /= s;
     x = rintf(x);
-    x += qzero;
+    x += z;
     x = clamp(x, 0.0f, maxq);
 
     // Optionally save quant
@@ -44,11 +45,11 @@ __global__ void fused_quantize_adjust_kernel
 
     half h_s = __float2half_rn(s);
     half h_x = __float2half_rn(x);
-    half h_qzero = __float2half_rn(qzero);
+    half h_z = __float2half_rn(z);
 
     // Dequantize
 
-    h_x = __hsub(h_x, h_qzero);
+    h_x = __hsub(h_x, h_z);
     h_x = __hmul(h_x, h_s);
     float q = __half2float(h_x);
     quant[idx] = q;
@@ -71,7 +72,7 @@ void fused_quantize_adjust_cuda
     int row,
     int rows,
     int columns,
-    float qzero,
+    const float* qzero,
     float maxq
 )
 {

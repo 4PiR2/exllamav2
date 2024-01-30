@@ -13,7 +13,7 @@ void quantize_range
     torch::Tensor quant,
     torch::Tensor scale,
     torch::Tensor out_q,
-    float qzero,
+    torch::Tensor qzero,
     float maxq,
     torch::Tensor hessian_inv,
     torch::Tensor weights,
