@@ -984,7 +984,11 @@ std::vector<float> sample_basic
     std::vector<float>& mirostat_mu,
     float mirostat_tau,
     float mirostat_eta,
-    float post_temperature
+    float post_temperature,
+    float min_temp = 0,
+    float max_temp = 0.0f,
+    float temp_exponent = 1.0f,
+    float smoothing_factor = 0.0f
 )
 {
     TORCH_CHECK_DTYPE(logits, kFloat);
@@ -1016,13 +1020,20 @@ std::vector<float> sample_basic
 
     for (int i = 0; i < bsz; i++)
     {
+        float exponent = 1.0f;
+        if (smoothing_factor > 0)
+        {
+            exponent = 2.0f;
+            temperature /= smoothing_factor;
+        }
         softmax_cpu
         (
-            vocab_size,
-            temperature,
-            logits_ptr + i * vocab_size,
-            logits_filter_ptr + i * vocab_size,
-            temp_probs
+             vocab_size,
+             temperature,
+             logits_ptr + i * vocab_size,
+             logits_filter_ptr + i * vocab_size,
+             exponent,
+             temp_probs
         );
 
         if (top_k == 1)
@@ -1078,10 +1089,11 @@ std::vector<float> sample_basic
             normalize_cpu(num_candidates, temp_probs);
         }
 
-        if (post_temperature != 1.0f)
+        if (post_temperature != 1.0f || max_temp > min_temp)
         {
-            num_candidates = post_softmax_temperature(num_candidates, temp_probs, temp_indices, post_temperature);
+            num_candidates = post_softmax_temperature(num_candidates, temp_probs, temp_indices, post_temperature, min_temp, max_temp, temp_exponent);
         }
+
 
         num_candidates = multinomial_cpu(num_candidates, temp_probs, temp_indices, random);
         output_tokens[i] = temp_indices[0];

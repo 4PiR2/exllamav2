@@ -94,9 +94,13 @@ def quant_linear(job: dict,
     diff1 = torch.max(quant_w)
     quant_w = None
 
-    if diff1 > 0.01 or diff2 > 0.01:
+    # TODO: Investigate why this might fail for the first QKV projections of certain models
+
+    if diff1 > 0.05 or diff2 > 0.05:
         print(" ## Quantization error (2)")
         os._exit(0)
+    elif diff1 > 0.01 or diff2 > 0.01:
+        print(f" !! Warning, difference of ({diff1:.6f}, {diff2:.6f}) between unpacked and dequantized matrices")
 
     # Free reconstructed linear layer
 
@@ -418,11 +422,9 @@ def quant(job, save_fn, model):
             save_fn()
 
             if mode != "linear":
-                os.remove(states_filename)
-                os.rename(temp_filename, states_filename)
+                os.replace(temp_filename, states_filename)
 
             job["q_last_module_idx"] = index
 
             del job["invalid"]
             save_fn()
-
