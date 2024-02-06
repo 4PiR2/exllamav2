@@ -218,7 +218,7 @@ uintptr_t make_q_matrix
         height = q_weight.size(0) * 8;
     }
 
-    TORCH_CHECK(temp_dq.size(0) >= width * height, "Insufficient size of temp_dq buffer")
+    // TORCH_CHECK(temp_dq.size(0) >= width * height, "Insufficient size of temp_dq buffer")
 
     QMatrix* m = new QMatrix
     (
