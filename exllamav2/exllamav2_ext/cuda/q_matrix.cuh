@@ -45,6 +45,7 @@ public:
 
     QMatrix
     (
+        const bool is_q_weight_shuffled,
         const int _device,
         const int _height,
         const int _width,

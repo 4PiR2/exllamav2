@@ -19,6 +19,7 @@
 
 uintptr_t make_q_matrix
 (
+    bool is_q_weight_shuffled,
     torch::Tensor q_weight,
     torch::Tensor q_perm,
     torch::Tensor q_invperm,
@@ -76,6 +77,7 @@ uintptr_t make_q_matrix
 
     QMatrix* m = new QMatrix
     (
+        is_q_weight_shuffled,
         device,
         height,
         width,

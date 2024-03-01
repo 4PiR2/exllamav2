@@ -46,6 +46,7 @@ __global__ void shuffle_kernel
 
 QMatrix::QMatrix
 (
+    const bool is_q_weight_shuffled,
     const int _device,
     const int _height,
     const int _width,
@@ -166,15 +167,18 @@ QMatrix::QMatrix
 //     DBGI(rows_3);
 //     DBGI(rows_2);
 
-    // Shuffle quantized data
+    if (!is_q_weight_shuffled)
+    {
+        // Shuffle quantized data
 
-    dim3 blockDim, gridDim;
-    blockDim.x = THREADS_X;
-    blockDim.y = 1;
-    gridDim.x = DIVIDE(width, THREADS_X);
-    gridDim.y = 1;
+        dim3 blockDim, gridDim;
+        blockDim.x = THREADS_X;
+        blockDim.y = 1;
+        gridDim.x = DIVIDE(width, THREADS_X);
+        gridDim.y = 1;
 
-    shuffle_kernel<<<gridDim, blockDim>>>(cuda_q_weight, height, width, rows_8, rows_6, rows_5, rows_4, rows_3, rows_2);
+        shuffle_kernel<<<gridDim, blockDim>>>(cuda_q_weight, height, width, rows_8, rows_6, rows_5, rows_4, rows_3, rows_2);
+    }
 }
 
 QMatrix::~QMatrix()
