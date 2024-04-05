@@ -28,6 +28,7 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m)
     m.def("quantize", &quantize, "quantize");
     m.def("quantize_err", &quantize_err, "quantize_err");
     m.def("quantize_range", &quantize_range, "quantize_range");
+    m.def("quantize_range_inplace", &quantize_range_inplace, "quantize_range_inplace");
 
     // sampling
 
@@ -37,6 +38,7 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m)
     m.def("fast_fill_cpu_ones_bool", &fast_fill_cpu_ones_bool, "fast_fill_cpu_ones_bool");
     m.def("fast_fadd_cpu", &fast_fadd_cpu, "fast_fadd_cpu");
     m.def("fast_copy_cpu", &fast_copy_cpu, "fast_copy_cpu");
+    m.def("dump_profile_results", &dump_profile_results, "dump_profile_results");
 
     // safetensors
 
@@ -52,6 +54,8 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m)
     m.def("free_q_matrix", &free_q_matrix, "free_q_matrix");
     m.def("reconstruct", &reconstruct, "reconstruct");
     m.def("gemm_half_q_half", &gemm_half_q_half, "gemm_half_q_half");
+    m.def("matrix_fp16_to_q4", &matrix_fp16_to_q4, "matrix_fp16_to_q4");
+    m.def("matrix_q4_to_fp16", &matrix_q4_to_fp16, "matrix_q4_to_fp16");
 
     // qattn
 
@@ -76,6 +80,8 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m)
 
     m.def("fp16_to_fp8", &fp16_to_fp8, "fp16_to_fp8");
     m.def("fp8_to_fp16", &fp8_to_fp16, "fp8_to_fp16");
+    m.def("fp16_to_q4_kv", &fp16_to_q4_kv, "fp16_to_q4_kv");
+    m.def("q4_to_fp16_kv", &q4_to_fp16_kv, "q4_to_fp16_kv");
 //    m.def("array_fp16_to_fp8_ref", &array_fp16_to_fp8_ref, "array_fp16_to_fp8_ref");
 //    m.def("array_fp8_to_fp16_ref", &array_fp8_to_fp16_ref, "array_fp8_to_fp16_ref");
 

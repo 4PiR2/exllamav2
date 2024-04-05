@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import gc
 import torch
 from torch import nn
@@ -75,7 +77,7 @@ class AdaptiveGPTQ:
     layer: nn.Linear
     device: torch.device
 
-    group_size: int
+    group_size: int | dict
     bits: list
     bits_groups: list
     scale_bits: int
@@ -86,21 +88,21 @@ class AdaptiveGPTQ:
     hessian: torch.tensor
     total_groups: int
 
-    perm: torch.tensor = None
-    perm_cpu: torch.tensor = None
-    invperm: torch.tensor = None
+    perm: torch.Tensor | None
+    perm_cpu: torch.Tensor | None
+    invperm: torch.Tensor | None
 
     # g_idx: torch.tensor = None
-    scale: torch.tensor = None
-    qscale: torch.tensor = None
-    qscale_max: torch.tensor = None
-    qweight: torch.tensor = None
-    qgroups: torch.tensor = None
+    scale: torch.Tensor | None
+    qscale: torch.Tensor | None
+    qscale_max: torch.Tensor | None
+    qweight: torch.Tensor | None
+    qgroups: torch.Tensor | None
 
-    quant: torch.tensor = None
-    weights: torch.tensor = None
-    hessian: torch.tensor = None
-    hessian_inv: torch.tensor = None
+    quant: torch.Tensor | None
+    weights: torch.Tensor | None
+    hessian: torch.Tensor | None
+    hessian_inv: torch.Tensor | None
     num_samples: int = 0
     num_batches: int = 0
 
@@ -114,10 +116,21 @@ class AdaptiveGPTQ:
         self.rows = self.layer.weight.data.shape[1]
         self.columns = self.layer.weight.data.shape[0]
 
-        self.weights = self.layer.weight.data.T.clone().float().contiguous()
+        # self.weights = self.layer.weight.data.T.clone().float().contiguous()
+        self.weights = None
         self.hessian = None
         self.num_samples = 0
         self.num_batches = 0
+
+        self.perm = None
+        self.perm_cpu = None
+        self.inv_perm = None
+
+        self.scale = None
+        self.qscale = None
+        self.qscale_max = None
+        self.qweight = None
+        self.qgroups = None
 
 
     def drop_buffers(self):
@@ -170,38 +183,6 @@ class AdaptiveGPTQ:
 
         self.total_groups = groups
 
-        # if isinstance(bits, list):
-        #
-        #     self.bits = bits
-        #     g128 = (self.rows + 128 - 1) // 128
-        #     self.bits_groups = [max(round(g128 * p), 1) * 128 // self.group_size for p in bits_prop]
-        #     e = sum(self.bits_groups) - self.total_groups
-        #     self.bits_groups[-1] -= e
-        #
-        # else:
-        #
-        #     self.bits = [bits]
-        #     self.bits_groups = [self.total_groups]
-
-
-    # def num_bits(self, subtract_columns = 0):
-    #
-    #     gi = self.g_idx.numel() * 32
-    #     qs = self.qscale.numel() * self.scale_bits
-    #     qss = self.qscale_max.numel() * 16
-    #
-    #     w = 0
-    #     tr = self.rows
-    #     for g, b in zip(self.bits_groups, self.bits):
-    #
-    #         c = self.columns - subtract_columns
-    #         r = self.group_size * g
-    #         if r > tr: r = tr
-    #         tr -= r
-    #         w += r * c * b
-    #
-    #     return w + gi + qs + qss
-
 
     def add_batch(self, inputs):
 
@@ -218,13 +199,16 @@ class AdaptiveGPTQ:
             self.hessian += inputs.matmul(inputs.T)
 
 
-    def prepare(self):
+    def prepare(self, no_h_inv = False):
 
         with torch.inference_mode():
 
             self.hessian /= self.num_batches
-
             diagonal = torch.diag(self.hessian)
+
+            # Prepare weights
+
+            self.weights = self.layer.weight.data.T.clone().float().contiguous().cpu()
 
             # Zero weights that have no impact. Disabling this since it feels a little drastic based on just the calibration
             # data. It likely never triggers, anyway.
@@ -237,7 +221,14 @@ class AdaptiveGPTQ:
 
             self.perm = torch.argsort(diagonal, descending = True)
             self.perm_cpu = self.perm.cpu()
-            self.weights = self.weights[self.perm, :]
+
+            # if self.weights.numel() > 1e9:
+            #     self.weights = self.weights.to("cpu")
+            #     self.weights = self.weights[self.perm_cpu, :]
+            #     self.weights = self.weights.to("cuda:0")
+            # else:
+            self.weights = self.weights[self.perm_cpu, :]
+
             hessian = self.hessian[self.perm][:, self.perm]
             self.hessian = None
 
@@ -256,7 +247,7 @@ class AdaptiveGPTQ:
             # Inverse of H
 
             attempts = 0
-            while True:
+            while not no_h_inv:
 
                 try:
 
@@ -311,31 +302,123 @@ class AdaptiveGPTQ:
                     if attempts == 10:
                         raise ValueError("Hessian is not invertible")
 
-            self.hessian_inv = hessian_inv
+            # Swap H to system RAM
+
+            self.hessian_inv = None if no_h_inv else hessian_inv.cpu()
             self.hessian = None
+
 
     def reuse_h(self, other):
 
         with torch.inference_mode():
 
+            # Prepare weights
+
+            self.weights = self.layer.weight.data.T.clone().float().contiguous().cpu()
+
             self.hessian_inv = other.hessian_inv
             self.hessian = None
             self.perm = other.perm
             self.perm_cpu = other.perm_cpu
-            self.weights = self.weights[self.perm, :]
+            self.weights = self.weights[self.perm_cpu, :]
+
+
+    def quantize_rtn_inplace(self, keep_qweight = False, apply = False):
+        assert apply and keep_qweight
+
+        with torch.inference_mode():
+
+            weights = self.weights.to("cuda:0")
+            self.qweight = torch.zeros_like(self.weights, dtype = torch.short, device = "cuda:0")
+
+            num_groups = 0
+            for bits_idx in range(len(self.bits)):
+                num_groups += self.bits_groups[bits_idx]
+
+            scale = []
+            qscale = []
+            qscale_max = torch.empty((num_groups,), dtype = torch.float, device = "cuda:0")
+            qgroups = []
+
+            group_idx = 0
+            group_idx_list = []
+
+            b = 0
+            for bits_idx, bits in enumerate(self.bits):
+                quantizer = AdaptiveQuantizer(bits = bits, scale_bits = self.scale_bits)
+
+                for group in range(self.bits_groups[bits_idx]):
+                    a = b
+                    b = min(a + self.group_size[bits], self.rows)
+
+                    qgroups.append(bits)
+                    qgroups.append(0)
+
+                    quantizer.find_params(self.weights[a : b, :])
+                    scale.append(quantizer.scale)
+                    qscale.append(quantizer.qscale)
+                    qscale_max[group_idx] = quantizer.qscale_max
+
+                    ext_c.quantize_range_inplace(self.weights,
+                                                 quantizer.scale,
+                                                 self.qweight,
+                                                 quantizer.qzero,
+                                                 quantizer.maxq,
+                                                 a,
+                                                 b)
+
+                    group_idx_list += [group_idx] * (b - a)
+                    group_idx += 1
+
+            # Create g_idx to store inverse activation order
+
+            self.invperm = torch.argsort(self.perm)
+
+            # Store scales
+
+            self.scale = torch.stack(scale, dim = 0)
+            self.qscale = torch.stack(qscale, dim = 0)
+            self.qscale_max = qscale_max.to(torch.float16)
+            self.qgroups = torch.tensor(qgroups, dtype = torch.short)
+
+            # I love Python
+
+            scale = None
+            qscale = None
+            qscale_max = None
+            qgroups = None
+            group_idx_list = None
+
+            qc = weights.cpu()
+            qc = qc.to(torch.half)
+            invperm = self.invperm.cpu()
+            q = qc[invperm, :].T
+            q = q.reshape(self.weights.T.shape)
+
+            dev = weights.device
+            self.weights = None
+            gc.collect()
+            torch.cuda.empty_cache()
+
+            q = q.to(dev)
+            self.layer.weight.data = q
+            self.weights = q.T
 
 
     def quantize(self, keep_qweight = False, apply = False):
 
         with torch.inference_mode():
 
-            if apply:
-                weights = self.weights
-                self.layer.weight.data = torch.zeros((1, 1), dtype = torch.float32, device = weights.device)
-            else:
-                weights = self.weights.clone()
+            hessian_inv_cuda = self.hessian_inv.to("cuda:0")
 
-            self.quant = torch.zeros_like(self.weights)
+            # if apply:
+            #     weights = self.weights
+            #     self.layer.weight.data = torch.zeros((1, 1), dtype = torch.float32, device = weights.device)
+            # else:
+            #     weights = self.weights.clone()
+            weights = self.weights.to("cuda:0")
+
+            self.quant = torch.zeros_like(self.weights, device = "cuda:0")
 
             if keep_qweight:
                 self.qweight = torch.zeros_like(weights, dtype = torch.short)
@@ -348,7 +431,7 @@ class AdaptiveGPTQ:
 
             scale = []
             qscale = []
-            qscale_max = torch.empty((num_groups,), dtype = torch.float, device = self.weights.device)
+            qscale_max = torch.empty((num_groups,), dtype = torch.float, device = "cuda:0")
             qgroups = []
 
             error = weights.clone()
@@ -376,7 +459,7 @@ class AdaptiveGPTQ:
                                          self.qweight if keep_qweight else none_tensor,
                                          quantizer.qzero,
                                          quantizer.maxq,
-                                         self.hessian_inv,
+                                         hessian_inv_cuda,
                                          weights,
                                          error,
                                          a,
@@ -384,7 +467,6 @@ class AdaptiveGPTQ:
 
                     group_idx_list += [group_idx] * (b - a)
                     group_idx += 1
-
 
             # Create g_idx to store inverse activation order
 

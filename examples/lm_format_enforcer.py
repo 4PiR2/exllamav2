@@ -28,22 +28,18 @@ import time, json
 # Initialize model and cache
 
 model_directory = "/mnt/str/models/llama2-13b-exl2/4.0bpw/"
-
-config = ExLlamaV2Config()
-config.model_dir = model_directory
-config.prepare()
-
-model = ExLlamaV2(config)
 print("Loading model: " + model_directory)
 
+config = ExLlamaV2Config(model_directory)
+model = ExLlamaV2(config)
 cache = ExLlamaV2Cache(model, lazy = True)
 model.load_autosplit(cache)
-
 tokenizer = ExLlamaV2Tokenizer(config)
 
 # Initialize generator
 
 generator = ExLlamaV2StreamingGenerator(model, cache, tokenizer)
+generator.speculative_ngram = True
 generator.warmup()  # for more accurate timing
 
 # Generate with or without filter
@@ -70,7 +66,7 @@ def completion(prompt, filters = None, max_new_tokens = 200, eos_bias = False):
     time_begin_prompt = time.time()
 
     generator.set_stop_conditions([tokenizer.eos_token_id])
-    generator.begin_stream(input_ids, settings)
+    generator.begin_stream_ex(input_ids, settings)
 
     # Streaming loop
 
@@ -83,12 +79,12 @@ def completion(prompt, filters = None, max_new_tokens = 200, eos_bias = False):
 
     result = ""
     while True:
-        chunk, eos, _ = generator.stream()
-        result += chunk
+        res = generator.stream_ex()
+        result += res["chunk"]
         generated_tokens += 1
-        print(chunk, end = "")
+        print(res["chunk"], end = "")
         sys.stdout.flush()
-        if eos or generated_tokens == max_new_tokens: break
+        if res["eos"] or generated_tokens == max_new_tokens: break
 
     time_end = time.time()
 

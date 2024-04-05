@@ -29,16 +29,17 @@ uintptr_t make_q_mlp
     torch::Tensor temp_b,
     torch::Tensor temp_dq,
     int max_rows,
-    bool act_gelu
+    bool act_gelu,
+    bool has_residual
 )
 {
     QMatrix* qm_gate = reinterpret_cast<QMatrix*> (q_gate);
     QMatrix* qm_up = reinterpret_cast<QMatrix*> (q_up);
     QMatrix* qm_down = reinterpret_cast<QMatrix*> (q_down);
 
-    TORCH_CHECK_DTYPE(layernorm, kHalf);
-    TORCH_CHECK(qm_gate->height == layernorm.size(0), "gate_proj is wrong shape")
-    TORCH_CHECK(qm_up->height == layernorm.size(0), "up_proj is wrong shape")
+    TORCH_CHECK_DTYPE_OPT(layernorm, kHalf);
+    if (qm_gate && !layernorm.is_meta()) TORCH_CHECK(qm_gate->height == layernorm.size(0), "gate_proj is wrong shape")
+    if (!layernorm.is_meta()) TORCH_CHECK(qm_up->height == layernorm.size(0), "up_proj is wrong shape")
 
     QMLP* mlp = new QMLP
     (
@@ -54,7 +55,8 @@ uintptr_t make_q_mlp
         (half*) temp_b.data_ptr(),
         (half*) temp_dq.data_ptr(),
         max_rows,
-        act_gelu
+        act_gelu,
+        has_residual
     );
 
     return reinterpret_cast<uintptr_t> (mlp);
@@ -82,7 +84,7 @@ void q_mlp_forward_
 
     const at::cuda::OptionalCUDAGuard device_guard(device_of(x));
 
-    TORCH_CHECK(x.size(1) == mlp->gate->height, "x is wrong shape");
+    TORCH_CHECK(x.size(1) == mlp->up->height, "x is wrong shape");
     TORCH_CHECK(x.size(0) <= mlp->max_rows, "Too many rows in x");
 
     mlp->forward_

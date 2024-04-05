@@ -7,6 +7,7 @@ from exllamav2 import(
     ExLlamaV2Config,
     ExLlamaV2Cache,
     ExLlamaV2Cache_8bit,
+    ExLlamaV2Cache_Q4,
     ExLlamaV2Tokenizer,
     model_init,
 )
@@ -24,6 +25,7 @@ from chat_prompts import prompt_formats
 prompt_formats_list = list(prompt_formats.keys())
 
 # Options
+# (!!!) NOTE: These go on top of the engine arguments that can be found in `model_init.py` (!!!)
 
 parser = argparse.ArgumentParser(description = "Simple Llama2 chat example for ExLlamaV2")
 parser.add_argument("-dm", "--draft_model_dir", type = str, default = None, help = "Path to draft model directory")
@@ -50,7 +52,10 @@ parser.add_argument("-maxr", "--max_response_tokens", type = int, default = 1000
 parser.add_argument("-resc", "--response_chunk", type = int, default = 250, help = "Space to reserve in context for reply, default = 250")
 parser.add_argument("-ncf", "--no_code_formatting", action = "store_true", help = "Disable code formatting/syntax highlighting")
 
-parser.add_argument("-c8", "--cache_8bit", action = "store_true", help = "Use 8-bit cache")
+parser.add_argument("-c8", "--cache_8bit", action = "store_true", help = "Use 8-bit (FP8) cache")
+parser.add_argument("-cq4", "--cache_q4", action = "store_true", help = "Use Q4 cache")
+
+parser.add_argument("-ngram", "--ngram_decoding", action = "store_true", help = "Use n-gram speculative decoding")
 
 parser.add_argument("-pt", "--print_timings", action = "store_true", help = "Output timings after each prompt")
 parser.add_argument("-amnesia", "--amnesia", action = "store_true", help = "Forget context after every response")
@@ -85,7 +90,7 @@ if system_prompt is None: system_prompt = prompt_format.default_system_prompt()
 
 model_init.check_args(args)
 model_init.print_options(args)
-model, tokenizer = model_init.init(args, allow_auto_split = True)
+model, tokenizer = model_init.init(args, allow_auto_split = True, max_output_len = 16)
 
 # Initialize draft model if provided, assume it always fits on first device
 
@@ -121,6 +126,8 @@ if args.draft_model_dir:
 
     if args.cache_8bit:
         draft_cache = ExLlamaV2Cache_8bit(draft_model)
+    elif args.cache_q4:
+        draft_cache = ExLlamaV2Cache_Q4(draft_model)
     else:
         draft_cache = ExLlamaV2Cache(draft_model)
 
@@ -128,6 +135,8 @@ if args.draft_model_dir:
 
 if args.cache_8bit:
     cache = ExLlamaV2Cache_8bit(model, lazy = not model.loaded)
+elif args.cache_q4:
+    cache = ExLlamaV2Cache_Q4(model, lazy = not model.loaded)
 else:
     cache = ExLlamaV2Cache(model, lazy = not model.loaded)
 
@@ -188,6 +197,7 @@ def get_tokenized_context(max_len):
 # Generator
 
 generator = ExLlamaV2StreamingGenerator(model, cache, tokenizer, draft_model, draft_cache)
+generator.speculative_ngram = args.ngram_decoding
 
 settings = ExLlamaV2Sampler.Settings()
 settings.temperature = args.temperature
@@ -256,7 +266,7 @@ while True:
     # Send tokenized context to generator
 
     active_context = get_tokenized_context(model.config.max_seq_len - min_space_in_context)
-    generator.begin_stream(active_context, settings)
+    generator.begin_stream_ex(active_context, settings)
 
     # Stream response
 
@@ -270,13 +280,17 @@ while True:
 
     if print_timings:
         time_begin_stream = time.time()
-        if draft_model is not None: generator.reset_sd_stats()
+        if args.ngram_decoding or draft_model is not None: generator.reset_sd_stats()
 
     while True:
 
         # Get response stream
 
-        chunk, eos, tokens = generator.stream()
+        res = generator.stream_ex()
+        chunk = res["chunk"]
+        eos = res["eos"]
+        tokens = res["chunk_token_ids"]
+
         if len(response_text) == 0: chunk = chunk.lstrip()
         response_text += chunk
         responses_ids[-1] = torch.cat([responses_ids[-1], tokens], dim = -1)
@@ -360,7 +374,7 @@ while True:
         time_end_stream = time.time()
         speed = response_tokens / (time_end_stream - time_begin_stream)
 
-        if draft_model is not None:
+        if draft_model is not None or args.ngram_decoding:
             eff, acc, _, _, _ = generator.get_sd_stats()
             sd_stats = f", SD eff. {eff*100:.2f}%, SD acc. {acc*100:.2f}%"
         else:
