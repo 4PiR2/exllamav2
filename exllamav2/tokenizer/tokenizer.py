@@ -43,6 +43,7 @@ class ExLlamaV2Tokenizer:
 
     id_to_ord: list | None
     id_to_piece: list | None
+    id_to_piece_with_special: list | None
     piece_to_id: dict | None
     prefix_to_ids: dict | None
     prefix_id_to_ids: dict | None
@@ -62,7 +63,7 @@ class ExLlamaV2Tokenizer:
 
     tokenizer_config_dict: dict | None
 
-    def __init__(self, config, lazy_init = False, force_json = False):
+    def __init__(self, config, lazy_init = True, force_json = False):
         """
         Initialize tokenizer from model config
 
@@ -105,7 +106,6 @@ class ExLlamaV2Tokenizer:
         else: raise FileNotFoundError("No supported tokenizer found.")
 
         # Attempt to load added tokens from tokenizer.json
-        # TODO: Deal with rstrip and lstrip for added, non-control tokens
 
         self.extended_piece_to_id = {}
         self.unspecial_piece_to_id = {}
@@ -137,6 +137,17 @@ class ExLlamaV2Tokenizer:
             with open(added_tokens_path, encoding = "utf8") as f:
                 self.extended_piece_to_id.update(json.load(f))
 
+        # Add special tokens from tokenizer_config.json
+
+        if self.tokenizer_config_dict and "added_tokens_decoder" in self.tokenizer_config_dict:
+            atd = self.tokenizer_config_dict["added_tokens_decoder"]
+            for (k, v) in atd.items():
+                if not v["special"]:
+                    continue
+                token_id = int(k)
+                token_str = v["content"]
+                self.extended_piece_to_id[token_str] = token_id
+
         # Remove unspecial added tokens that exist in the base tokenizer already, but only if they decode correctly
         # see https://github.com/huggingface/tokenizers/issues/1392
 
@@ -163,7 +174,7 @@ class ExLlamaV2Tokenizer:
 
         # If model config doesn't specify BOS and EOS tokens, try to load from tokenizer config
 
-        def get_default_token_id(config_key: str, current: int | None, default: int):
+        def get_default_token_id(config_key: str, current: int | None, default: int | None):
             if current is not None: return current
             if self.tokenizer_config_dict is not None and config_key in self.tokenizer_config_dict:
                 st = self.tokenizer_config_dict[config_key]
@@ -181,7 +192,7 @@ class ExLlamaV2Tokenizer:
             else:
                 return default
 
-        self.pad_token_id = get_default_token_id("pad_token", self.pad_token_id, 0)
+        self.pad_token_id = get_default_token_id("pad_token", self.pad_token_id, None)
         self.bos_token_id = get_default_token_id("bos_token", self.bos_token_id, 1)
         self.eos_token_id = get_default_token_id("eos_token", self.eos_token_id, 2)
 
@@ -191,11 +202,16 @@ class ExLlamaV2Tokenizer:
         self.bos_token = (self.tokenizer_model.bos_token() or self.extended_id_to_piece.get(self.bos_token_id, None)) or self.tokenizer_model.id_to_piece(self.bos_token_id)
         self.eos_token = (self.tokenizer_model.eos_token() or self.extended_id_to_piece.get(self.eos_token_id, None)) or self.tokenizer_model.id_to_piece(self.eos_token_id)
 
-        # Use "<pad>" or EOS token as fallback for padding token
+        # Use "<pad>" or BOS token as fallback for padding token
 
         if self.pad_token_id is None:
             pad_test = self.tokenizer_model.piece_to_id("<pad>")
-            self.pad_token_id = pad_test or self.eos_token_id
+            if pad_test:
+                self.pad_token_id = pad_test
+            elif self.eos_token_id != self.bos_token_id:
+                self.pad_token_id = self.eos_token_id
+            else:
+                self.pad_token_id = -1
 
         # Special case if <unk> and <pad> have the same ID
 
@@ -231,6 +247,7 @@ class ExLlamaV2Tokenizer:
 
         self.id_to_ord = None
         self.id_to_piece = None
+        self.id_to_piece_with_special = None
         self.piece_to_id = None
         self.prefix_to_ids = None
         self.prefix_id_to_ids = None
@@ -246,6 +263,12 @@ class ExLlamaV2Tokenizer:
             self.get_prefix_id_to_ids_dict()
             self.get_char_trie()
             self.get_char_trie_ci()
+
+        # Take stock and issue warnings if needed
+
+        # if self.pad_token_id == self.bos_token_id:
+        #     print(" !! Warning: PAD and EOS tokens are identical. Generations might break " + \
+        #           "and batch sizes > 1 are unlikely to work correctly.")
 
 
     # Return size of valid vocabulary
@@ -275,6 +298,21 @@ class ExLlamaV2Tokenizer:
         """
 
         return torch.tensor([[token_id]], dtype = torch.long)
+
+
+    def single_id(self, token: str) -> int:
+        """
+        Get the ID of a single token from exact string match
+
+        :param token:
+            Token
+
+        :return:
+            int
+        """
+
+        tid = self.extended_piece_to_id.get(token, self.get_piece_to_id_dict().get(token))
+        return tid
 
 
     # Encode string with added, unspecial tokens
@@ -319,7 +357,6 @@ class ExLlamaV2Tokenizer:
 
 
     # Encode string or list of strings
-    # TODO: Deal with rstrip and lstrip for control tokens
 
     def encode(self,
                text: str | list[str],
@@ -357,9 +394,9 @@ class ExLlamaV2Tokenizer:
 
             list_ids = [self.encode_special(t) for t in text] if encode_special_tokens else [self.encode_unspecial(t) for t in text]
 
-            if add_bos:
+            if add_bos and self.bos_token_id is not None:
                 for ids in list_ids: ids.insert(0, self.bos_token_id)
-            if add_eos:
+            if add_eos and self.eos_token_id is not None:
                 for ids in list_ids: ids.append(self.eos_token_id)
 
             max_length = max([len(ids) for ids in list_ids])
@@ -384,8 +421,10 @@ class ExLlamaV2Tokenizer:
             # text is a single string
 
             ids = self.encode_special(text) if encode_special_tokens else self.encode_unspecial(text)
-            if add_bos: ids.insert(0, self.bos_token_id)
-            if add_eos: ids.append(self.eos_token_id)
+            if add_bos and self.bos_token_id is not None:
+                ids.insert(0, self.bos_token_id)
+            if add_eos and self.eos_token_id is not None:
+                ids.append(self.eos_token_id)
 
             ids = torch.tensor(ids).to(torch.long).unsqueeze(0)
             if return_offsets:
@@ -416,7 +455,6 @@ class ExLlamaV2Tokenizer:
         return text
 
 
-
     # Decode sequence with or without special tokens
 
     def decode_(self, seq, decode_special_tokens):
@@ -430,6 +468,8 @@ class ExLlamaV2Tokenizer:
 
         else:
 
+            max_token = self.tokenizer_model.vocab_size()
+            seq = [t for t in seq if (t != self.pad_token_id and t < max_token)]
             text = ""
             start = 0
             end = 0
@@ -554,7 +594,18 @@ class ExLlamaV2Tokenizer:
 
     # Copy vocabulary from model
 
-    def get_id_to_piece_list(self):
+    def get_id_to_piece_list(self, include_special_tokens = False):
+
+        if include_special_tokens:
+            if self.id_to_piece_with_special is not None: return self.id_to_piece_with_special
+
+            id_to_piece_extended = self.get_id_to_piece_list().copy()
+            for k, v in self.extended_id_to_piece.items():
+                id_to_piece_extended[k] = v
+
+            self.id_to_piece_with_special = id_to_piece_extended
+            return self.id_to_piece_with_special
+
 
         if self.id_to_piece is not None: return self.id_to_piece
         id_to_ord = self.get_id_to_ord_list()

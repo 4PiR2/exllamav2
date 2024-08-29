@@ -48,7 +48,6 @@ __global__ void shuffle_kernel
 
 QMatrix::QMatrix
 (
-    const bool is_q_weight_shuffled,
     const int _device,
     const int _height,
     const int _width,
@@ -172,6 +171,8 @@ QMatrix::QMatrix
     if (!is_q_weight_shuffled)
     {
         // Shuffle quantized data
+
+        if (no_map) return;
 
         dim3 blockDim, gridDim;
         blockDim.x = THREADS_X;

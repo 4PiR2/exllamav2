@@ -46,9 +46,11 @@ class ExLlamaV2ParallelDecoder(ExLlamaV2Module):
     def numel(self) -> int:
 
         return self.attn.numel() + \
-               self.mlp.numel()
+               self.mlp.numel() + \
+               self.input_layernorm.numel()
 
 
+    @torch.inference_mode
     def load(self):
 
         self.input_layernorm.load()
@@ -81,7 +83,7 @@ class ExLlamaV2ParallelDecoder(ExLlamaV2Module):
         return max(self.attn.scratch_space(), self.mlp.scratch_space())
 
 
-    def set_device_idx(self, idx: int):
+    def set_device_idx(self, idx: int | None):
         super().set_device_idx(idx)
 
         self.input_layernorm.set_device_idx(idx)
@@ -95,15 +97,22 @@ class ExLlamaV2ParallelDecoder(ExLlamaV2Module):
                 attn_params: ExLlamaV2Attention.Params | None = None,
                 past_len: int | None = None,
                 intermediates: bool = False,
-                loras: list[ExLlamaV2Lora] | None = None) -> torch.Tensor | dict[str: torch.Tensor]:
+                loras: list[ExLlamaV2Lora] | None = None,
+                **kwargs) -> torch.Tensor | dict[str: torch.Tensor]:
 
         if intermediates:
-            return self.forward_interm(hidden_states, cache, attn_params, past_len, intermediates, loras)
+            return self.forward_interm(hidden_states,
+                                       cache,
+                                       attn_params,
+                                       past_len,
+                                       intermediates,
+                                       loras,
+                                       **kwargs)
 
         a = self.input_layernorm.forward(hidden_states)
         b = a.clone()
-        a = self.attn.forward(a, cache, attn_params, past_len, intermediates, loras)
-        b = self.mlp.forward(b, cache, attn_params, past_len, intermediates, loras)
+        a = self.attn.forward(a, cache, attn_params, past_len, intermediates, loras, **kwargs)
+        b = self.mlp.forward(b, cache, attn_params, past_len, intermediates, loras, **kwargs)
         hidden_states += a
         hidden_states += b
         return hidden_states
@@ -115,13 +124,14 @@ class ExLlamaV2ParallelDecoder(ExLlamaV2Module):
                        attn_params: ExLlamaV2Attention.Params | None = None,
                        past_len: int | None = None,
                        intermediates: bool = False,
-                       loras: list[ExLlamaV2Lora] | None = None) -> torch.Tensor | dict[str: torch.Tensor]:
+                       loras: list[ExLlamaV2Lora] | None = None,
+                       **kwargs) -> torch.Tensor | dict[str: torch.Tensor]:
 
         a = self.input_layernorm.forward(hidden_states)
         b = a.clone()
         post_norm = a.clone()
-        res_a = self.attn.forward(a, cache, attn_params, past_len, True, loras)
-        res_b = self.mlp.forward(b, cache, attn_params, past_len, True, loras)
+        res_a = self.attn.forward(a, cache, attn_params, past_len, True, loras, **kwargs)
+        res_b = self.mlp.forward(b, cache, attn_params, past_len, True, loras, **kwargs)
         hidden_states += res_a["hidden_states"]
         hidden_states += res_b["hidden_states"]
 

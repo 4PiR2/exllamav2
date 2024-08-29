@@ -11,7 +11,7 @@ precompile = 'EXLLAMA_NOCOMPILE' not in os.environ
 
 windows = (os.name == "nt")
 
-extra_cflags = ["/Ox", "/arch:AVX2"] if windows else ["-O3", "-mavx2"]
+extra_cflags = ["/Ox"] if windows else ["-O3"]
 
 if ext_debug:
     extra_cflags += ["-ftime-report", "-DTORCH_USE_CUDA_DSA"]
@@ -34,6 +34,7 @@ setup_kwargs = {
                 "exllamav2/exllamav2_ext/ext_bindings.cpp",
                 "exllamav2/exllamav2_ext/ext_cache.cpp",
                 "exllamav2/exllamav2_ext/ext_gemm.cpp",
+                "exllamav2/exllamav2_ext/ext_hadamard.cpp",
                 "exllamav2/exllamav2_ext/ext_norm.cpp",
                 "exllamav2/exllamav2_ext/ext_qattn.cpp",
                 "exllamav2/exllamav2_ext/ext_qmatrix.cpp",
@@ -42,6 +43,9 @@ setup_kwargs = {
                 "exllamav2/exllamav2_ext/ext_rope.cpp",
                 "exllamav2/exllamav2_ext/ext_safetensors.cpp",
                 "exllamav2/exllamav2_ext/ext_sampling.cpp",
+                "exllamav2/exllamav2_ext/ext_element.cpp",
+                "exllamav2/exllamav2_ext/ext_tp.cpp",
+                "exllamav2/exllamav2_ext/cuda/graph.cu",
                 "exllamav2/exllamav2_ext/cuda/h_add.cu",
                 "exllamav2/exllamav2_ext/cuda/h_gemm.cu",
                 "exllamav2/exllamav2_ext/cuda/lora.cu",
@@ -52,10 +56,13 @@ setup_kwargs = {
                 "exllamav2/exllamav2_ext/cuda/q_mlp.cu",
                 "exllamav2/exllamav2_ext/cuda/q_gemm.cu",
                 "exllamav2/exllamav2_ext/cuda/rms_norm.cu",
+                "exllamav2/exllamav2_ext/cuda/head_norm.cu",
                 "exllamav2/exllamav2_ext/cuda/layer_norm.cu",
                 "exllamav2/exllamav2_ext/cuda/rope.cu",
                 "exllamav2/exllamav2_ext/cuda/cache.cu",
                 "exllamav2/exllamav2_ext/cuda/util.cu",
+                "exllamav2/exllamav2_ext/cuda/softcap.cu",
+                "exllamav2/exllamav2_ext/cuda/tp.cu",
                 "exllamav2/exllamav2_ext/cuda/comp_units/kernel_select.cu",
                 "exllamav2/exllamav2_ext/cuda/comp_units/unit_gptq_1.cu",
                 "exllamav2/exllamav2_ext/cuda/comp_units/unit_gptq_2.cu",
@@ -67,7 +74,10 @@ setup_kwargs = {
                 "exllamav2/exllamav2_ext/cuda/comp_units/unit_exl2_3a.cu",
                 "exllamav2/exllamav2_ext/cuda/comp_units/unit_exl2_3b.cu",
                 "exllamav2/exllamav2_ext/cpp/quantize_func.cpp",
+                "exllamav2/exllamav2_ext/cpp/profiling.cpp",
+                "exllamav2/exllamav2_ext/cpp/generator.cpp",
                 "exllamav2/exllamav2_ext/cpp/sampling.cpp",
+                "exllamav2/exllamav2_ext/cpp/sampling_avx2.cpp",
                 "exllamav2/exllamav2_ext/cpp/safetensors.cpp"
             ],
             extra_compile_args=extra_compile_args,
@@ -110,7 +120,8 @@ setup(
         "pygments",
         "websockets",
         "regex",
-        "numpy"
+        "numpy",
+        "rich"
     ],
     include_package_data = True,
     verbose = verbose,

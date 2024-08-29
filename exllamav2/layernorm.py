@@ -29,6 +29,7 @@ class ExLlamaV2LayerNorm(ExLlamaV2Module):
         self.variance_epsilon = 1e-6
 
 
+    @torch.inference_mode
     def load(self):
 
         w = self.load_weight()
@@ -55,6 +56,12 @@ class ExLlamaV2LayerNorm(ExLlamaV2Module):
             self.bias = bias
 
         self.variance_epsilon = self.model.config.norm_eps
+
+
+    def numel(self):
+
+        return 0
+        # return self.layernorm.weight.data.numel()
 
 
     def unload(self):
@@ -92,7 +99,9 @@ class ExLlamaV2LayerNorm(ExLlamaV2Module):
                 attn_params = None,
                 past_len = None,
                 intermediates: bool = False,
-                loras = None) -> torch.Tensor | dict[str: torch.Tensor]:
+                loras = None,
+                output_fp32 = False,  # TODO:
+                **kwargs) -> torch.Tensor | dict[str: torch.Tensor]:
 
         output_shape = hidden_states.shape
         hidden_states = hidden_states.view(-1, hidden_states.shape[-1])
@@ -117,7 +126,9 @@ class ExLlamaV2LayerNorm(ExLlamaV2Module):
                       attn_params = None,
                       past_len = None,
                       intermediates: bool = False,
-                      loras = None) -> torch.Tensor | dict[str: torch.Tensor]:
+                      loras = None,
+                      output_fp32 = False,  # TODO:
+                      **kwargs) -> torch.Tensor | dict[str: torch.Tensor]:
 
         hidden_states = self.layernorm(hidden_states)
 

@@ -93,6 +93,7 @@ class ExLlamaV2MoEMLP(ExLlamaV2Module):
         return sum(l.numel() for l in self.w1 + self.w2 + self.w3)
 
 
+    @torch.inference_mode
     def load(self):
 
         self.post_attention_layernorm.load()
@@ -103,8 +104,8 @@ class ExLlamaV2MoEMLP(ExLlamaV2Module):
             self.w3[e].load()
 
         if self.w1[0].is_quant():
-            device_tensors = self.model.get_device_tensors(self.device_idx)
-            device_tensors.begin_scratch_alloc()
+            device_context = self.model.get_device_context(self.device_idx)
+            device_context.begin_scratch_alloc()
             self.q_handle = ext_c.make_q_moe_mlp(self.post_attention_layernorm.weight,
                                                  self.post_attention_layernorm.bias if self.post_attention_layernorm.bias is not None else none_tensor,
                                                  isinstance(self.post_attention_layernorm, ExLlamaV2RMSNorm),
@@ -115,12 +116,12 @@ class ExLlamaV2MoEMLP(ExLlamaV2Module):
                                                  [w.q_handle for w in self.w1],
                                                  [w.q_handle for w in self.w2],
                                                  [w.q_handle for w in self.w3],
-                                                 device_tensors.get_scratch_slice(self.temp_state_size()),
-                                                 device_tensors.get_scratch_slice(self.temp_gathered_state_size()),
-                                                 device_tensors.get_scratch_slice(self.temp_a_size()),
-                                                 device_tensors.get_scratch_slice(self.temp_b_size()),
-                                                 device_tensors.get_scratch_slice(self.temp_logit_size()),
-                                                 device_tensors.get_scratch_slice(self.temp_dq_size()),
+                                                 device_context.get_scratch_slice(self.temp_state_size()),
+                                                 device_context.get_scratch_slice(self.temp_gathered_state_size()),
+                                                 device_context.get_scratch_slice(self.temp_a_size()),
+                                                 device_context.get_scratch_slice(self.temp_b_size()),
+                                                 device_context.get_scratch_slice(self.temp_logit_size()),
+                                                 device_context.get_scratch_slice(self.temp_dq_size()),
                                                  self.model.config.max_input_len * self.model.config.max_batch_size,
                                                  self.model.config.arch.mlp_act_func == "gelu")
 
@@ -200,7 +201,7 @@ class ExLlamaV2MoEMLP(ExLlamaV2Module):
         return self.model.config.max_input_len * self.model.config.max_batch_size * self.model.config.num_experts * 2 + 128
 
 
-    def set_device_idx(self, idx: int):
+    def set_device_idx(self, idx: int | None):
         super().set_device_idx(idx)
 
         self.post_attention_layernorm.set_device_idx(idx)
@@ -217,7 +218,8 @@ class ExLlamaV2MoEMLP(ExLlamaV2Module):
                 attn_params = None,
                 past_len = None,
                 intermediates: bool = False,
-                loras: list[ExLlamaV2Lora] | None = None) -> torch.Tensor | dict[str: torch.Tensor]:
+                loras: list[ExLlamaV2Lora] | None = None,
+                **kwargs) -> torch.Tensor | dict[str: torch.Tensor]:
 
         batch_size, sequence_length, hidden_dim = hidden_states.shape
 
@@ -225,7 +227,7 @@ class ExLlamaV2MoEMLP(ExLlamaV2Module):
         # for the LoRA matmuls in order to work with the C++ path
 
         if self.q_handle is None or intermediates or batch_size * sequence_length > 4 or self.num_experts not in [4, 8, 16] or (loras is not None and len(loras) > 0):
-            return self.forward_torch(hidden_states, cache, attn_params, past_len, intermediates, loras = loras)
+            return self.forward_torch(hidden_states, cache, attn_params, past_len, intermediates, loras = loras, **kwargs)
 
         # if loras is None or self.temp_lora_size == 0:
         #     pass_loras = []
@@ -247,7 +249,8 @@ class ExLlamaV2MoEMLP(ExLlamaV2Module):
                       attn_params = None,
                       past_len = None,
                       intermediates = False,
-                      loras: list[ExLlamaV2Lora] | None = None) -> torch.Tensor | dict[str: torch.Tensor]:
+                      loras: list[ExLlamaV2Lora] | None = None,
+                      **kwargs) -> torch.Tensor | dict[str: torch.Tensor]:
 
         residual = hidden_states
 
